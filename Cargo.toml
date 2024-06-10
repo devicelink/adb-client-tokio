@@ -1,0 +1,18 @@
+[package]
+name = "adb-client"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = "0.3.30"
+futures-util = "0.3.30"
+hexdump = "0.1.1"
+pretty-hex = "0.4.1"
+regex = "1.10.4"
+thiserror = "1.0.59"
+tokio = { version = "1.37.0", features = ["full"] }
+tokio-stream = "0.1.15"
+tokio-util = { version = "0.7.11", features = ["codec"] }
+usb-ids = "1.2024.3"
