@@ -1,4 +1,4 @@
-# ADB Client Implementation in Rust
+# Rust ADB Client
 
 Checkout [Android Source for Details about the used protocols](https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/adb/)
 

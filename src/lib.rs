@@ -56,7 +56,6 @@ impl AdbResponseDecoder {
 
 impl AdbResponseDecoder {
     fn decode_status(&mut self, src: &mut BytesMut) -> Result<Option<AdbResponse>> {
-        format!("adb client response decoder {}", pretty_hex::pretty_hex(&src));
         if src.len() < ADB_RESPONSE_STATUS_LENGTH {
             // Not enough data to read length marker.
             return Ok(None);
@@ -351,7 +350,6 @@ where
     }
 
     pub async fn tcpip(mut self, serial: &str, port: u16) -> Result<String> {
-        format!("adb client tcpip {} {}", serial, port);
         let request: AdbRequest = AdbRequest::new(&format!("host:transport:{}", serial));
         self.connection.send(request).await?;
         self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
