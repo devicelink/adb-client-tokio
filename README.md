@@ -1,3 +1,5 @@
+[![Build](https://github.com/devicelink/adb-client/actions/workflows/build.yaml/badge.svg)](https://github.com/devicelink/adb-client/actions/workflows/build.yaml)
+
 # Rust ADB Client
 
 Checkout [Android Source for Details about the used protocols](https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/adb/)
