@@ -32,12 +32,14 @@ pub(crate) enum AdbResponse {
     FAIL { message: String },
 }
 
+#[derive(Debug)]
 pub(crate) enum AdbResponseDecoderImpl {
     Status,
     StatusLengthPayload,
     StatusPayloadNewline,
 }
 
+#[derive(Debug)]
 pub(crate) struct AdbResponseDecoder {
     pub(crate) decoder_impl: AdbResponseDecoderImpl,
 }
@@ -195,6 +197,7 @@ impl Decoder for AdbResponseDecoder {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct AdbRequestEncoder {}
 
 impl AdbRequestEncoder {
@@ -229,6 +232,7 @@ impl Encoder<AdbRequest> for AdbRequestEncoder {
     }
 }
 
+#[derive(Debug)]
 pub(crate)  struct AdbClientConnection<R, W>
 where
     R: tokio::io::AsyncRead,

@@ -5,8 +5,70 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::FramedRead;
 use crate::util::{AdbError, Result};
 use crate::connection::{AdbClientConnection, AdbRequest, AdbResponseDecoderImpl};
+use std::fmt::Display;
+
+/// Specifiying all possibilities to connect to a device.
+#[derive(Debug)]
+pub enum Device {
+    /// use the only connected device (error if multiple devices connected)
+    Default,
+    /// use USB device (error if multiple devices connected)
+    Usb,
+    /// use TCP/IP device (error if multiple TCP/IP devices available)
+    TcpIp,
+    /// use device with given serial
+    Serial(String),
+}
+
+impl Display for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Device::Default => write!(f, "host:transport-any"),
+            Device::Usb => write!(f, "host:transport-usb"),
+            Device::TcpIp => write!(f, "host:transport-local"),
+            Device::Serial(serial) => write!(f, "host:transport:{}", serial),
+        }
+    }
+}
+
+/// allow external structs to convert to a device.
+pub trait ToDevice {
+    /// convert to a device.
+    fn to_device(&self) -> Device;
+}
+
+impl Into<AdbRequest> for Device {
+    fn into(self) -> AdbRequest {
+        AdbRequest::new(&self.to_string())
+    }
+}
+
+impl ToDevice for &str {
+    fn to_device(&self) -> Device {
+        Device::Serial(self.to_string())
+    }
+}
+
+impl ToDevice for &String {
+    fn to_device(&self) -> Device {
+        Device::Serial(self.to_string())
+    }
+}
 
 /// ADB client that can connect to ADB server and execute commands.
+/// 
+/// Example:
+/// ```no_run
+/// use adb_client_tokio::AdbClient;
+/// 
+/// #[tokio::main]
+/// async fn main() {
+///     let adb = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+///     let version = adb.get_host_version().await.expect("Failed to get host version");
+///     println!("ADB server version: {}", version);
+/// }
+/// ```
+#[derive(Debug)]
 pub struct AdbClient<R, W>
 where
     R: tokio::io::AsyncRead,
@@ -90,9 +152,8 @@ where
     }
 
     /// Restart the adb server on the device in tcp mode on the given port.
-    pub async fn tcpip(mut self, serial: &str, port: u16) -> Result<String> {
-        let request: AdbRequest = AdbRequest::new(&format!("host:transport:{}", serial));
-        self.connection.send(request).await?;
+    pub async fn tcpip(mut self, device: impl ToDevice, port: u16) -> Result<String> {
+        self.connection.send(device.to_device().into()).await?;
         self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         self.connection.next().await?;
 
@@ -104,9 +165,8 @@ where
     }
 
     /// Connect to a tcp port on the give device.
-    pub async fn connect_to_tcp_port(mut self, serial: &str, port: u16) -> Result<(R, W)> {
-        let request: AdbRequest = AdbRequest::new(&format!("host:transport:{}", serial));
-        self.connection.send(request).await?;
+    pub async fn connect_to_tcp_port(mut self, device: impl ToDevice, port: u16) -> Result<(R, W)> {
+        self.connection.send(device.to_device().into()).await?;
         self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         self.connection.next().await?;
 
@@ -135,9 +195,8 @@ where
     }
 
     /// forward tcp connections from local to remote.
-    pub async fn forward_server(&mut self, serial: &str, local: &str, remote: &str) -> Result<()> {
-        let request = AdbRequest::new(&format!("host:transport:{}", serial));
-        self.connection.send(request).await?;
+    pub async fn forward_server(&mut self, device: impl ToDevice, local: &str, remote: &str) -> Result<()> {
+        self.connection.send(device.to_device().into()).await?;
         self.connection.next().await?;
 
         let request = AdbRequest::new(&format!("forward:tcp:{};{}", local, remote));
@@ -148,11 +207,9 @@ where
     }
 
     /// run a shell command on the device.
-    pub async fn shell(mut self, serial: &str, command: &str) -> Result<String> {
+    pub async fn shell(mut self, device: impl ToDevice, command: &str) -> Result<String> {
+        self.connection.send(device.to_device().into()).await?;
         self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::StatusLengthPayload;
-
-        let request = AdbRequest::new(&format!("host:transport:{}", serial));
-        self.connection.send(request).await?;
         self.connection.next().await?;
 
         let request = AdbRequest::new(&format!("shell,v2,TEM=xterm-256color,raw:{}", command));
@@ -186,9 +243,12 @@ where
     }
 }
 
+/// ADB device list item.
 #[derive(Debug, Clone)]
 pub struct DeviceListItem {
+    /// Device serial number.
     pub id: String,
+    /// Device type.
     pub device_type: String,
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "adb-client-tokio"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "A Rust library for communicating with Android devices via the Android Debug Bridge (ADB) protocol."
 authors = ["Andreas Lüdeke <andreas@devicelink.app>"]
@@ -9,7 +9,9 @@ keywords = ["adb", "android", "debug", "bridge", "tokio"]
 categories = ["development-tools::debugging", "development-tools::testing"]
 repository = "https://github.com/devicelink/adb-client"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "adb_client_tokio"
+path = "src/lib.rs"
 
 [dependencies]
 futures = "0.3.30"
