@@ -19,8 +19,7 @@ Run a shell command on an device:
 
 ## Protocol Details
 
-
-Checkout [Android Source](https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/adb/) for Details about the used protocols
+Checkout [Android Source](https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/adb/) for details about the used protocols
 
 ## Development
 

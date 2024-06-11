@@ -7,7 +7,7 @@ authors = ["Andreas Lüdeke <andreas@devicelink.app>"]
 license = "MIT"
 keywords = ["adb", "android", "debug", "bridge", "tokio"]
 categories = ["development-tools::debugging", "development-tools::testing"]
-repository = "https://github.com/devicelink/adb-client"
+repository = "https://github.com/devicelink/adb-client-tokio"
 
 [lib]
 name = "adb_client_tokio"
