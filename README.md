@@ -1,6 +1,8 @@
 [![Build](https://github.com/devicelink/adb-client/actions/workflows/build.yaml/badge.svg)](https://github.com/devicelink/adb-client/actions/workflows/build.yaml)
+[![Crates.io](https://img.shields.io/crates/v/adb-client.svg)](https://crates.io/crates/adb-client-tokio)
+[![Docs.rs](https://docs.rs/adb-client-tokio/badge.svg)](https://docs.rs/adb-client-tokio)
 
-# Rust Android Debug Bridge (ADB) Client Library
+# Android Debug Bridge (ADB) Client Library for async Rust
 
 A pure rust implementation to send commands and forwards traffic to an android device using a adb server.
 
