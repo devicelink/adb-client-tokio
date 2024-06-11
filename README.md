@@ -6,15 +6,21 @@
 
 A pure rust implementation to send commands and forwards traffic to an android device using a adb server.
 
-# Examples
+# Complete Example
 
 Run a shell command on an device:
 
 ```rust
-        let adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
-        let manufaturer: String = adb_client
-            .shell("MY_SERIAL", "getprop ro.product.manufacturer")
-            .await?;
+use adb_client_tokio::{Device, AdbClient};
+use std::error::Error;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let mut adb = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+    let version = adb.shell(Device::Default, "getprop ro.product.model").await?;
+    println!("ADB server version: {}", version);
+Ok(())
+}
 ```
 
 ## Protocol Details

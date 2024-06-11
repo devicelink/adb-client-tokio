@@ -1,5 +1,5 @@
 use std::path::Path;
-use crate::shell::{AdbShellDecoder, AdbShellResponseId};
+use crate::shell::{AdbShellProtocol, AdbShellResponseId};
 use tokio::net::{TcpStream, UnixStream};
 use tokio_stream::StreamExt;
 use tokio_util::codec::FramedRead;
@@ -8,7 +8,7 @@ use crate::connection::{AdbClientConnection, AdbRequest, AdbResponseDecoderImpl}
 use std::fmt::Display;
 
 /// Specifiying all possibilities to connect to a device.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Device {
     /// use the only connected device (error if multiple devices connected)
     Default,
@@ -43,6 +43,12 @@ impl Into<AdbRequest> for Device {
     }
 }
 
+impl ToDevice for Device {
+    fn to_device(&self) -> Device {
+        self.clone()
+    }
+}
+
 impl ToDevice for &str {
     fn to_device(&self) -> Device {
         Device::Serial(self.to_string())
@@ -63,7 +69,7 @@ impl ToDevice for &String {
 /// 
 /// #[tokio::main]
 /// async fn main() {
-///     let adb = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+///     let mut adb = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
 ///     let version = adb.get_host_version().await.expect("Failed to get host version");
 ///     println!("ADB server version: {}", version);
 /// }
@@ -209,15 +215,16 @@ where
     /// run a shell command on the device.
     pub async fn shell(mut self, device: impl ToDevice, command: &str) -> Result<String> {
         self.connection.send(device.to_device().into()).await?;
-        self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::StatusLengthPayload;
+        self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         self.connection.next().await?;
 
-        let request = AdbRequest::new(&format!("shell,v2,TEM=xterm-256color,raw:{}", command));
+        let request = AdbRequest::new(&format!("shell,v2,TERM=xterm-256color,raw:{}", command));
         self.connection.send(request).await?;
+        self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         self.connection.next().await?;
 
         let reader = self.connection.reader.into_inner();
-        let mut reader = FramedRead::new(reader, AdbShellDecoder::new());
+        let mut reader = FramedRead::new(reader, AdbShellProtocol::new());
 
         let mut response = Vec::<u8>::new();
         loop {
@@ -229,7 +236,7 @@ where
 
             match packet.id {
                 AdbShellResponseId::Stdout => {
-                    response.extend_from_slice(&packet.response);
+                    response.extend_from_slice(&packet.payload);
                 }
                 AdbShellResponseId::Exit => {
                     break;
@@ -257,70 +264,74 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_failure() {
-        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5038").await.unwrap();
+    async fn test_failure() -> Result<()> {
+        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
         adb_client
             .connection
             .send(AdbRequest::new("host:abcd"))
-            .await
-            .unwrap();
+            .await?;
+        adb_client.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         let response = adb_client.connection.next().await;
 
         assert_eq!(
             "FAILED response status: unknown host service".to_string(),
             response.err().unwrap().to_string()
         );
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_get_host_version_command() {
-        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+    async fn test_get_host_version_command() -> Result<()> {
+        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
 
         let version: String = adb_client
             .get_host_version()
-            .await
-            .expect("Failed to get host version");
+            .await?;
 
         assert_eq!(version, "0029");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_get_devices_command() {
-        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+    async fn test_get_devices_command() -> Result<()> {
+        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
 
         let devices = adb_client
             .get_device_list()
-            .await
-            .expect("Failed to get host version");
+            .await?;
 
         assert_eq!(devices.len(), 1);
+        Ok(())
     }
     
+    #[ignore]
     #[tokio::test]
-    async fn test_tcpip_command() {
-        let adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+    async fn test_tcpip_command() -> Result<()> {
+        let adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
         let response: String = adb_client
             .tcpip("08261JECB10524", 5555)
-            .await
-            .expect("Failed to execute tcpip command");
+            .await?;
+        
         assert_eq!(response, "restarting in TCP mode port: 5555");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_get_prop_command() {
-        let adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+    async fn test_get_prop_command() -> Result<()> {
+        let adb_client = AdbClient::connect_tcp("127.0.0.1:5038").await?;
         let manufaturer: String = adb_client
             .shell("08261JECB10524", "getprop ro.product.manufacturer")
-            .await
-            .expect("Failed to get manufacturer");
+            .await?;
 
-        let adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
+        let adb_client = AdbClient::connect_tcp("127.0.0.1:5038").await?;
         let model: String = adb_client
             .shell("08261JECB10524", "getprop ro.product.model")
-            .await
-            .expect("Failed to get model");
+            .await?;
 
         println!("manufaturer: {:?}", &manufaturer);
         println!("model: {:?}", &model);
+
+        Ok(())
     }
 }

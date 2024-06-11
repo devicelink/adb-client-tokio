@@ -1,5 +1,5 @@
 use crate::{connection::MAX_MESSAGE_SIZE, util::AdbError, util::Result};
-use tokio_util::{bytes::{Buf, BytesMut}, codec::Decoder};
+use tokio_util::{bytes::{Buf, BufMut, BytesMut}, codec::{Decoder, Encoder}};
 
 const ADB_SHELL_REQUEST_HEADER_LENGTH: usize = 5;
 pub(crate) enum AdbShellResponseId {
@@ -31,19 +31,18 @@ impl AdbShellResponseId {
 
 pub(crate) struct AdbShellPacket {
     pub(crate) id: AdbShellResponseId,
-    pub(crate) response: Vec<u8>,
+    pub(crate) payload: Vec<u8>,
 }
 
-pub(crate) struct AdbShellDecoder {}
+pub(crate) struct AdbShellProtocol {}
 
-impl AdbShellDecoder {
-    pub fn new() -> AdbShellDecoder {
-        AdbShellDecoder {}
+impl AdbShellProtocol {
+    pub fn new() -> AdbShellProtocol {
+        AdbShellProtocol {}
     }
 }
 
-
-impl Decoder for AdbShellDecoder {
+impl Decoder for AdbShellProtocol {
     type Item = AdbShellPacket;
     type Error = AdbError;
 
@@ -84,6 +83,18 @@ impl Decoder for AdbShellDecoder {
 
         src.advance(ADB_SHELL_REQUEST_HEADER_LENGTH + length);
 
-        Ok(Some(AdbShellPacket { id, response }))
+        Ok(Some(AdbShellPacket { id, payload: response }))
+    }
+}
+
+impl Encoder<AdbShellPacket> for AdbShellProtocol {
+    type Error = AdbError;
+
+    fn encode(&mut self, item: AdbShellPacket, dst: &mut BytesMut) -> std::result::Result<(), Self::Error> {
+        dst.reserve(ADB_SHELL_REQUEST_HEADER_LENGTH + item.payload.len());
+        dst.put_u8(item.id as u8);
+        dst.put_u32_le(item.payload.len() as u32);
+        dst.extend_from_slice(&item.payload);
+        Ok(())
     }
 }
