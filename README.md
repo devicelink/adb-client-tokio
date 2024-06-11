@@ -1,6 +1,6 @@
-[![Crates.io](https://img.shields.io/crates/v/adb-client.svg)](https://crates.io/crates/adb-client-tokio)
+[![Crates.io](https://img.shields.io/crates/v/adb-client-tokio.svg)](https://crates.io/crates/adb-client-tokio)
 [![Docs.rs](https://docs.rs/adb-client-tokio/badge.svg)](https://docs.rs/adb-client-tokio)
-[![Build](https://github.com/devicelink/adb-client-tokio/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/devicelink/adb-client-tokio/actions)
+[![Build](https://github.com/devicelink/adb-client-tokio/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/devicelink/adb-client-tokio/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 # Android Debug Bridge (ADB) Client Library for async Rust
