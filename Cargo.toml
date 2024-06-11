@@ -1,6 +1,6 @@
 [package]
 name = "adb-client-tokio"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "A Rust library for communicating with Android devices via the Android Debug Bridge (ADB) protocol."
 authors = ["Andreas Lüdeke <andreas@devicelink.app>"]
