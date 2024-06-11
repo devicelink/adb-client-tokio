@@ -5,7 +5,7 @@ edition = "2021"
 description = "A Rust library for communicating with Android devices via the Android Debug Bridge (ADB) protocol."
 authors = ["Andreas Lüdeke <andreas@devicelink.app>"]
 license = "MIT"
-keywords = ["adb", "android", "debug", "bridge", "protocol", "tokio", "mobile", "device", "usb"]
+keywords = ["adb", "android", "debug", "bridge", "tokio"]
 categories = ["development-tools::debugging", "development-tools::testing"]
 repository = "https://github.com/devicelink/adb-client"
 
