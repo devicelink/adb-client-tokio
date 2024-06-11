@@ -1,0 +1,21 @@
+FROM rust:1.78-alpine as build
+
+RUN apk add --no-cache musl-dev
+
+WORKDIR /usr/src/adb-client
+COPY Cargo.toml Cargo.lock ./
+
+# This dummy build helps to cache dependencies
+RUN mkdir -p src/bin && \
+    echo 'fn main() { println!("dummy") }' > src/bin/dummy.rs && \
+    cargo build --release --bin dummy && \
+    rm -rf src/bin
+
+COPY src ./src
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry cargo build --release
+
+FROM build as release
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry cargo publish --dry-run --allow-dirty
+

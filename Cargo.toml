@@ -1,7 +1,13 @@
 [package]
 name = "adb-client"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
+description = "A Rust library for communicating with Android devices via the Android Debug Bridge (ADB) protocol."
+authors = ["Andreas Lüdeke <andreas@devicelink.app>"]
+license = "MIT"
+keywords = ["adb", "android", "debug", "bridge", "protocol", "tokio", "mobile", "device", "usb"]
+categories = ["development-tools::debugging", "development-tools::testing"]
+repository = "https://github.com/devicelink/adb-client"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
