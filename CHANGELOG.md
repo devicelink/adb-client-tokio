@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/devicelink/adb-client-tokio/compare/v0.0.5...v0.0.6) - 2024-07-05
+
+### Added
+- allow clients to connect to a tcp, unix or jwdp enpoint on the device
+
+### Fixed
+- make sure to read enough bytes when reading a response with payload
+
 ## [0.0.5](https://github.com/devicelink/adb-client-tokio/compare/v0.0.4...v0.0.5) - 2024-06-13
 
 ### Other
