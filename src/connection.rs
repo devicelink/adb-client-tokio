@@ -92,7 +92,7 @@ impl AdbResponseDecoder {
     }
 
     fn decode_status_and_payload(&mut self, src: &mut BytesMut) -> Result<Option<AdbResponse>> {
-        if src.len() < ADB_RESPONSE_STATUS_LENGTH {
+        if src.len() < ADB_RESPONSE_HEADER_LENGTH {
             // Not enough data to read length marker.
             return Ok(None);
         }
