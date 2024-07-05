@@ -169,14 +169,15 @@ where
         let message = self.connection.next().await?;
         Ok(message)
     }
+    
 
     /// Connect to a tcp port on the give device.
-    pub async fn connect_to_tcp_port(mut self, device: impl ToDevice, port: u16) -> Result<(R, W)> {
+    pub async fn connect_to_device(mut self, device: impl ToDevice, remote: Remote) -> Result<(R, W)> {
         self.connection.send(device.to_device().into()).await?;
         self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         self.connection.next().await?;
 
-        let request = AdbRequest::new(&format!("tcp:{}", port));
+        let request = AdbRequest::new(remote.to_string().as_str());
         self.connection.send(request).await?;
         self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         self.connection.next().await?;
@@ -247,6 +248,27 @@ where
 
         let real_response = std::str::from_utf8(&response)?;
         Ok(real_response.into())
+    }
+}
+
+/// represents the options to connect 
+#[derive(Debug)]
+pub enum Remote {
+    /// TCP localhost:<port> on device
+    Tcp(u16),
+    /// Unix local domain socket on device
+    Unix(String),
+    /// JDWP thread on VM process <pid>   
+    Jwp(u16)
+}
+
+impl Display for Remote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Remote::Tcp(port) => write!(f, "tcp:{}", port),
+            Remote::Unix(path) => write!(f, "local:{}", path),
+            Remote::Jwp(pid) => write!(f, "jdwp:{}", pid),
+        }
     }
 }
 
