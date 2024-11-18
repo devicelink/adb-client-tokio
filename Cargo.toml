@@ -15,7 +15,6 @@ path = "src/lib.rs"
 
 [dependencies]
 futures = "0.3.30"
-futures-util = "0.3.30"
 hexdump = "0.1.1"
 pretty-hex = "0.4.1"
 regex = "1.10.4"
