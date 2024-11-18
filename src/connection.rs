@@ -1,7 +1,11 @@
 use futures::sink::SinkExt;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::{TcpStream, UnixStream};
 use tokio_stream::StreamExt;
 
+use std::pin::Pin;
 use std::str;
+use std::task::{Context, Poll};
 use tokio_util::bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 
@@ -45,7 +49,7 @@ pub(crate) struct AdbResponseDecoder {
 }
 
 impl AdbResponseDecoder {
-    fn new() -> AdbResponseDecoder {
+    pub(crate) fn new() -> AdbResponseDecoder {
         AdbResponseDecoder {
             decoder_impl: AdbResponseDecoderImpl::StatusLengthPayload,
         }
@@ -129,7 +133,7 @@ impl AdbResponseDecoder {
         let payload: Vec<u8> =
             src[ADB_RESPONSE_HEADER_LENGTH..ADB_RESPONSE_HEADER_LENGTH + length].to_vec();
         let message = String::from_utf8_lossy(&payload).to_string();
-        src.advance(ADB_REQUEST_HEADER_LENGTH + length);
+        src.advance(ADB_RESPONSE_HEADER_LENGTH + length);
 
         // Read string from src
         match status {
@@ -187,13 +191,22 @@ impl Decoder for AdbResponseDecoder {
     type Error = AdbError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
-        match self.decoder_impl {
+        if src.len() == 0
+        {
+            return Ok(None);
+        }
+
+        let response = match self.decoder_impl {
             AdbResponseDecoderImpl::Status => self.decode_status(src),
             AdbResponseDecoderImpl::StatusLengthPayload => self.decode_status_and_payload(src),
             AdbResponseDecoderImpl::StatusPayloadNewline => {
                 self.decode_status_and_read_until_new_line(src)
             }
-        }
+        };
+
+        println!("decofing:\n{}", pretty_hex::pretty_hex(&src));
+
+        response
     }
 }
 
@@ -201,7 +214,7 @@ impl Decoder for AdbResponseDecoder {
 pub(crate) struct AdbRequestEncoder {}
 
 impl AdbRequestEncoder {
-    pub fn new() -> AdbRequestEncoder {
+    pub(crate) fn new() -> AdbRequestEncoder {
         AdbRequestEncoder {}
     }
 }
@@ -228,32 +241,198 @@ impl Encoder<AdbRequest> for AdbRequestEncoder {
         // Write the length and string to the buffer.
         dst.extend_from_slice(&length_hex.as_bytes());
         dst.extend_from_slice(&msg.payload);
+
+        println!("sending {}", pretty_hex::pretty_hex(&dst));
+
         Ok(())
     }
 }
 
+/// AdbClientStream represents a stream that can be used to communicate with an ADB server.
 #[derive(Debug)]
-pub(crate)  struct AdbClientConnection<R, W>
-where
-    R: tokio::io::AsyncRead,
-    W: tokio::io::AsyncWrite,
-{
-    pub(crate) reader: FramedRead<R, AdbResponseDecoder>,
-    pub(crate) writer: FramedWrite<W, AdbRequestEncoder>,
+pub enum AdbClientStream {
+    /// A TCP stream
+    Tcp(TcpStream),
+    /// A Unix stream
+    Unix(UnixStream),
 }
 
-impl<R, W> AdbClientConnection<R, W>
-where
-    R: tokio::io::AsyncRead + Unpin,
-    W: tokio::io::AsyncWrite + Unpin,
+impl AsyncRead for AdbClientStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            AdbClientStream::Tcp(s) => Pin::new(s).poll_read(cx, buf),
+            AdbClientStream::Unix(s) => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for AdbClientStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        match self.get_mut() {
+            AdbClientStream::Tcp(s) => Pin::new(s).poll_write(cx, buf),
+            AdbClientStream::Unix(s) => Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::result::Result<(), std::io::Error>> {
+        match self.get_mut() {
+            AdbClientStream::Tcp(s) => Pin::new(s).poll_flush(cx),
+            AdbClientStream::Unix(s) => Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::result::Result<(), std::io::Error>> {
+        match self.get_mut() {
+            AdbClientStream::Tcp(s) => Pin::new(s).poll_shutdown(cx),
+            AdbClientStream::Unix(s) => Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
+/// AdbClientStreamOwnedReadHalf represents the read half of an AdbClientStream.
+#[derive(Debug)]
+pub enum AdbClientStreamOwnedReadHalf {
+    /// A TCP read half
+    Tcp(tokio::net::tcp::OwnedReadHalf),
+    /// A Unix read half
+    Unix(tokio::net::unix::OwnedReadHalf),
+}
+
+/// AdbClientStreamOwnedWriteHalf represents the write half of an AdbClientStream.
+#[derive(Debug)]
+pub enum AdbClientStreamOwnedWriteHalf {
+    /// A TCP write half
+    Tcp(tokio::net::tcp::OwnedWriteHalf),
+    /// A Unix write half
+    Unix(tokio::net::unix::OwnedWriteHalf),
+}
+
+impl AdbClientStream {
+
+    /// Split the stream into a read half and a write half.
+    pub fn into_split(self) -> (AdbClientStreamOwnedReadHalf, AdbClientStreamOwnedWriteHalf) {
+        match self {
+            AdbClientStream::Tcp(s) => {
+                let (r, w) = s.into_split();
+                (AdbClientStreamOwnedReadHalf::Tcp(r), AdbClientStreamOwnedWriteHalf::Tcp(w))
+            }
+            AdbClientStream::Unix(s) => {
+                let (r, w) = s.into_split();
+                (AdbClientStreamOwnedReadHalf::Unix(r), AdbClientStreamOwnedWriteHalf::Unix(w))
+            }
+        }
+    }
+}
+
+impl AdbClientStreamOwnedReadHalf {
+    /// Reunite the read half with the write half to recreate the original stream.
+    pub fn reunite(self, w: AdbClientStreamOwnedWriteHalf) -> Result<AdbClientStream> {
+        match self {
+            AdbClientStreamOwnedReadHalf::Tcp(r) => {
+                let w = match w {
+                    AdbClientStreamOwnedWriteHalf::Tcp(w) => w,
+                    _ => panic!("Invalid write half"),
+                };
+                Ok(AdbClientStream::Tcp(r.reunite(w).unwrap()))
+            }
+            AdbClientStreamOwnedReadHalf::Unix(r) => {
+                let w = match w {
+                    AdbClientStreamOwnedWriteHalf::Unix(w) => w,
+                    _ => panic!("Invalid write half"),
+                };
+                Ok(AdbClientStream::Unix(r.reunite(w).unwrap()))
+            }
+        }
+
+    }
+}
+
+impl AsyncRead for AdbClientStreamOwnedReadHalf {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            AdbClientStreamOwnedReadHalf::Tcp(s) => Pin::new(s).poll_read(cx, buf),
+            AdbClientStreamOwnedReadHalf::Unix(s) => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for AdbClientStreamOwnedWriteHalf {
+    #[inline]
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            AdbClientStreamOwnedWriteHalf::Unix(x) => Pin::new(x).poll_write(cx, buf),
+            AdbClientStreamOwnedWriteHalf::Tcp(x) => Pin::new(x).poll_write(cx, buf),
+        }
+    }
+
+    #[inline]
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            AdbClientStreamOwnedWriteHalf::Unix(x) => Pin::new(x).poll_write_vectored(cx, bufs),
+            AdbClientStreamOwnedWriteHalf::Tcp(x) => Pin::new(x).poll_write_vectored(cx, bufs),
+        }
+    }
+
+    #[inline]
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            AdbClientStreamOwnedWriteHalf::Unix(x) => x.is_write_vectored(),
+            AdbClientStreamOwnedWriteHalf::Tcp(x) => x.is_write_vectored(),
+        }
+    }
+
+    #[inline]
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            AdbClientStreamOwnedWriteHalf::Unix(x) => Pin::new(x).poll_flush(cx),
+            AdbClientStreamOwnedWriteHalf::Tcp(x) => Pin::new(x).poll_flush(cx),
+        }
+    }
+
+    #[inline]
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            AdbClientStreamOwnedWriteHalf::Unix(x) => Pin::new(x).poll_shutdown(cx),
+            AdbClientStreamOwnedWriteHalf::Tcp(x) => Pin::new(x).poll_shutdown(cx),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate)  struct AdbClientConnection
 {
-    pub(crate)  fn wrap(reader: R, writer: W) -> AdbClientConnection<R, W>
-    where
-        R: tokio::io::AsyncRead,
-        W: tokio::io::AsyncWrite,
+    pub(crate) reader: FramedRead<AdbClientStreamOwnedReadHalf, AdbResponseDecoder>,
+    pub(crate) writer: FramedWrite<AdbClientStreamOwnedWriteHalf, AdbRequestEncoder>,
+}
+
+impl<'a> AdbClientConnection
+{
+    pub(crate) fn new(socket: AdbClientStream) -> AdbClientConnection
     {
-        let reader = FramedRead::new(reader, AdbResponseDecoder::new());
-        let writer = FramedWrite::new(writer, AdbRequestEncoder::new());
+        let (r, w) = socket.into_split();
+
+        let reader = FramedRead::new(r, AdbResponseDecoder::new());
+        let writer = FramedWrite::new(w, AdbRequestEncoder::new());
 
         return AdbClientConnection { reader, writer };
     }

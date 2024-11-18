@@ -11,3 +11,4 @@ mod connection;
 
 pub use util::*;
 pub use client::*;
+pub use connection::*;
