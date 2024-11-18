@@ -1,11 +1,14 @@
-use std::path::Path;
+use crate::connection::{
+    AdbClientConnection, AdbClientStream, AdbRequest, AdbRequestEncoder, AdbResponseDecoder,
+    AdbResponseDecoderImpl,
+};
 use crate::shell::{AdbShellProtocol, AdbShellResponseId};
+use crate::util::{AdbError, Result};
+use std::fmt::Display;
+use std::path::Path;
 use tokio::net::{TcpStream, UnixStream};
 use tokio_stream::StreamExt;
-use tokio_util::codec::FramedRead;
-use crate::util::{AdbError, Result};
-use crate::connection::{AdbClientConnection, AdbRequest, AdbResponseDecoderImpl};
-use std::fmt::Display;
+use tokio_util::codec::{FramedRead, FramedWrite};
 
 /// Specifiying all possibilities to connect to a device.
 #[derive(Debug, Clone)]
@@ -61,12 +64,33 @@ impl ToDevice for &String {
     }
 }
 
+/// AdbClientSocketUrl represents a URL that can be used to connect to an ADB server.
+#[derive(Debug, Clone)]
+pub enum AdbClientSocketUrl {
+    /// A UNIX socket
+    UNIX(String),
+    /// A TCP socket
+    TCP(String),
+}
+
+impl AdbClientSocketUrl {
+    /// Connect to the ADB server using the URL.
+    pub async fn connect(self) -> Result<AdbClient> {
+        let socket = match self {
+            AdbClientSocketUrl::UNIX(path) => AdbClientStream::Unix(UnixStream::connect(path).await?),
+            AdbClientSocketUrl::TCP(address) => AdbClientStream::Tcp(TcpStream::connect(address).await?),
+        };
+
+        Ok(AdbClient::new(socket))
+    }
+}
+
 /// ADB client that can connect to ADB server and execute commands.
-/// 
+///
 /// Example:
 /// ```no_run
 /// use adb_client_tokio::AdbClient;
-/// 
+///
 /// #[tokio::main]
 /// async fn main() {
 ///     let mut adb = AdbClient::connect_tcp("127.0.0.1:5037").await.unwrap();
@@ -75,48 +99,18 @@ impl ToDevice for &String {
 /// }
 /// ```
 #[derive(Debug)]
-pub struct AdbClient<R, W>
-where
-    R: tokio::io::AsyncRead,
-    W: tokio::io::AsyncWrite,
-{
-    connection: AdbClientConnection<R, W>,
+pub struct AdbClient {
+    connection: AdbClientConnection,
 }
 
-impl AdbClient<tokio::net::unix::OwnedReadHalf, tokio::net::unix::OwnedWriteHalf> {
-    /// Connect to ADB server using Unix domain socket.
-    pub async fn connect_unix<P>(path: P) -> Result<Self>
-    where
-        P: AsRef<Path>,
-    {
-        let stream = UnixStream::connect(path).await?;
-        let (reader, writer) = stream.into_split();
-        let connection = AdbClientConnection::wrap(reader, writer);
-
-        Ok(Self { connection })
+impl AdbClient {
+    /// Connect to the ADB server using a socket.
+    pub fn new(stream: AdbClientStream) -> Self {
+        Self {
+            connection: AdbClientConnection::new(stream),
+        }
     }
-}
 
-impl AdbClient<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>
-{
-    /// Connect to ADB server using TCP socket.
-    pub async fn connect_tcp<A>(addr: A) -> Result<Self>
-    where
-        A: tokio::net::ToSocketAddrs,
-    {
-        let stream = TcpStream::connect(addr).await?;
-        let (reader, writer) = stream.into_split();
-        let connection = AdbClientConnection::wrap(reader, writer);
-
-        Ok(Self { connection })
-    }
-}
-
-impl<R, W> AdbClient<R, W>
-where
-    R: tokio::io::AsyncRead + Unpin,
-    W: tokio::io::AsyncWrite + Unpin,
-{
     /// Get the version of the ADB server.
     pub async fn get_host_version(&mut self) -> Result<String> {
         self.connection
@@ -165,14 +159,18 @@ where
 
         let request = AdbRequest::new(&format!("tcpip:{}", port));
         self.connection.send(request).await?;
-        self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::StatusPayloadNewline;
+        self.connection.reader.decoder_mut().decoder_impl =
+            AdbResponseDecoderImpl::StatusPayloadNewline;
         let message = self.connection.next().await?;
         Ok(message)
     }
-    
 
     /// Connect to a tcp port on the give device.
-    pub async fn connect_to_device(mut self, device: impl ToDevice, remote: Remote) -> Result<(R, W)> {
+    pub async fn connect_to_device(
+        mut self,
+        device: impl ToDevice,
+        remote: Remote,
+    ) -> Result<AdbClientStream> {
         self.connection.send(device.to_device().into()).await?;
         self.connection.reader.decoder_mut().decoder_impl = AdbResponseDecoderImpl::Status;
         self.connection.next().await?;
@@ -183,9 +181,9 @@ where
         self.connection.next().await?;
 
         let reader = self.connection.reader.into_inner();
-        let writer: W = self.connection.writer.into_inner();
+        let writer = self.connection.writer.into_inner();
 
-        Ok((reader, writer))
+        Ok(reader.reunite(writer)?)
     }
 
     /// Connect a device to the ADB server.
@@ -202,7 +200,12 @@ where
     }
 
     /// forward tcp connections from local to remote.
-    pub async fn forward_server(&mut self, device: impl ToDevice, local: &str, remote: &str) -> Result<()> {
+    pub async fn forward_server(
+        &mut self,
+        device: impl ToDevice,
+        local: &str,
+        remote: &str,
+    ) -> Result<()> {
         self.connection.send(device.to_device().into()).await?;
         self.connection.next().await?;
 
@@ -236,7 +239,12 @@ where
             };
 
             match packet.id {
+                AdbShellResponseId::Stderr => {
+                    print!("{}", std::str::from_utf8(&packet.payload)?);
+                    response.extend_from_slice(&packet.payload);
+                }
                 AdbShellResponseId::Stdout => {
+                    print!("{}", std::str::from_utf8(&packet.payload)?);
                     response.extend_from_slice(&packet.payload);
                 }
                 AdbShellResponseId::Exit => {
@@ -251,21 +259,24 @@ where
     }
 }
 
-/// represents the options to connect 
+/// represents the options to connect
 #[derive(Debug)]
 pub enum Remote {
     /// TCP localhost:<port> on device
     Tcp(u16),
     /// Unix local domain socket on device
     Unix(String),
+    /// Unix abstract local domain socket on device
+    LocalAbstract(String),
     /// JDWP thread on VM process <pid>   
-    Jwp(u16)
+    Jwp(u16),
 }
 
 impl Display for Remote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Remote::Tcp(port) => write!(f, "tcp:{}", port),
+            Remote::LocalAbstract(name) => write!(f, "localabstract:{}", name),
             Remote::Unix(path) => write!(f, "local:{}", path),
             Remote::Jwp(pid) => write!(f, "jdwp:{}", pid),
         }
@@ -287,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_failure() -> Result<()> {
-        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
+        let mut adb_client = AdbClientSocketUrl::TCP("127.0.0.1:5037".to_owned()).connect().await?;
         adb_client
             .connection
             .send(AdbRequest::new("host:abcd"))
@@ -305,11 +316,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_host_version_command() -> Result<()> {
-        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
+        let mut adb_client = AdbClientSocketUrl::TCP("127.0.0.1:5037".to_owned()).connect().await?;
 
-        let version: String = adb_client
-            .get_host_version()
-            .await?;
+        let version: String = adb_client.get_host_version().await?;
 
         assert_eq!(version, "0029");
         Ok(())
@@ -317,36 +326,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_devices_command() -> Result<()> {
-        let mut adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
+        let mut adb_client = AdbClientSocketUrl::TCP("127.0.0.1:5037".to_owned()).connect().await?;
 
-        let devices = adb_client
-            .get_device_list()
-            .await?;
+        let devices = adb_client.get_device_list().await?;
 
         assert_eq!(devices.len(), 1);
         Ok(())
     }
-    
+
     #[ignore]
     #[tokio::test]
     async fn test_tcpip_command() -> Result<()> {
-        let adb_client = AdbClient::connect_tcp("127.0.0.1:5037").await?;
-        let response: String = adb_client
-            .tcpip("08261JECB10524", 5555)
-            .await?;
-        
+        let mut adb_client = AdbClientSocketUrl::TCP("127.0.0.1:5037".to_owned()).connect().await?;
+        let response: String = adb_client.tcpip("08261JECB10524", 5555).await?;
+
         assert_eq!(response, "restarting in TCP mode port: 5555");
         Ok(())
     }
 
     #[tokio::test]
     async fn test_get_prop_command() -> Result<()> {
-        let adb_client = AdbClient::connect_tcp("127.0.0.1:5038").await?;
+        let mut adb_client = AdbClientSocketUrl::TCP("127.0.0.1:5037".to_owned()).connect().await?;
         let manufaturer: String = adb_client
             .shell("08261JECB10524", "getprop ro.product.manufacturer")
             .await?;
 
-        let adb_client = AdbClient::connect_tcp("127.0.0.1:5038").await?;
+        let mut adb_client = AdbClientSocketUrl::TCP("127.0.0.1:5037".to_owned()).connect().await?;
         let model: String = adb_client
             .shell("08261JECB10524", "getprop ro.product.model")
             .await?;
